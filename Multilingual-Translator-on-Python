@@ -1,0 +1,163 @@
+import sys
+import requests
+import argparse
+from bs4 import BeautifulSoup
+
+
+class Translator:
+    langss: list = sorted([
+            'arabic',
+            'german',
+            'english',
+            'spanish',
+            'french',
+            'hebrew',
+            'japanese',
+            'dutch',
+            'polish',
+            'portuguese',
+            'romanian',
+            'russian',
+            'turkish',
+            'chinese',
+            'all',
+            ])
+
+
+    def __init__(self):
+        self.data: dict = {'to': str, 'from': str, 'word': str}
+        self.arg = self.args()
+        self.url: str = 'https://context.reverso.net/translation/'
+        self.session = requests.Session()
+        self.status = None
+        self.translations = []
+        self.examples = []
+
+    @staticmethod
+    def args():
+        parser = argparse.ArgumentParser(description="This program prints Translations & Examples \
+         and saves results in a file, using The Context Reverso web-site.")
+        parser.add_argument("source", help="Type the name of your language")
+        parser.add_argument("target", default="all",
+                            help="Type the name of a language you want to translate to or 'all'"
+                                 " to translate to all languages")
+        parser.add_argument("slovo", help="Type the word you want to translate")
+        return parser.parse_args()
+
+    def define_source(self):
+        try:
+            message1 = f"Sorry, the program doesn't support {self.arg.source}"
+            assert self.arg.source in Translator.langss, message1
+            self.data['from'] = self.arg.source
+            self.data['word'] = self.arg.slovo
+        except AssertionError as err:
+            print(err)
+            sys.exit()
+
+    def translate(self):
+        try:
+            message2 = f"Sorry, the program doesn't support {self.arg.target}"
+            assert (self.arg.target == 'all' or self.arg.target in Translator.langss), message2
+            if self.arg.target == 'all':
+                # print("let's cycle_all")  # TEST@!$
+                return self.cycle_all(self.data['from'])
+            else:
+                self.data['to'] = self.arg.target
+                # print("let's parser")  # TEST@!$
+                return self.parser(self.request(self.data['to']))
+        except AssertionError as err:
+            print(err)
+            sys.exit()
+
+    def cycle_all(self, mlang: str) -> None:
+        for z in Translator.langss:
+            if z != mlang:
+                if z != 'all':
+                    self.data['to'] = z
+                    # print(self.data['to'])  # TEST@!$
+                    self.parser(self.request(self.data['to']))
+                    Translator.save_in_file(self)
+
+    def request(self, target: str) -> BeautifulSoup:
+        headers = {
+            'sec-ch-ua': '"Chromium";v="94", "Google Chrome";v="94", ";Not A Brand";v="99"',
+            'sec-ch-ua-mobile': '?0',
+            'sec-ch-ua-platform': '"Windows"',
+            'sec-fetch-dest': 'document',
+            'sec-fetch-mode': 'navigate',
+            'sec-fetch-site': 'same-origin',
+            'sec-fetch-user': '?1',
+            'upgrade-insecure-requests': '1',
+            'accept-encoding': 'gzip, deflate, br',
+            'accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.9',
+            'User-Agent': 'Mozilla/5.0 (Windows NT 6.1; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/94.0.4606.81 Safari/537.36'
+        }
+        link = self.get_url(self.form_direction(target))
+        # print(link)  # TEST@!$
+        response = self.session.get(link, headers=headers)
+        self.status = Translator.connect(response)
+        if self.status == 404:
+            print(f"Sorry, unable to find {self.data['word']}")
+            sys.exit()
+        elif self.status != 200:
+            print('Something went wrong with your internet connection')
+            sys.exit()
+        else:
+            response.encoding = 'utf-8'
+            # print("we've got soup")  # TEST@!$
+            return BeautifulSoup(response.content, 'html.parser')
+
+    def parser(self, soup: BeautifulSoup) -> None:  # Parsing the soup
+        transls = []
+        for e in soup.find_all("a", {"class": ['ltr', 'dict']}):
+            transls.append(e.text.strip())
+        self.translations = transls[:4]
+        # print(self.translations)  # TEST@!$
+
+        exs = []
+        for it in soup.find_all('div', {'class': ['src', 'trg']}):
+            exs.append(it.text.strip())
+        self.examples = list(filter(None, exs))  # removes empty strings
+        # print(self.examples[:2])  # TEST@!$
+
+    @staticmethod
+    def connect(r):  # check internet connection with web-site
+        return r.status_code
+
+    def form_direction(self, target):
+        return f"{self.data['from']}-{target}"
+
+    def get_url(self, direction):
+        return f"https://context.reverso.net/translation/{direction}/{self.data['word']}"
+
+    def clean_translations(self):
+        return "\n".join(self.translations)
+
+    def clean_examples(self):
+        return "\n\n".join([f"{example[0]}\n{example[1]}" for example in
+                           zip(self.examples[:1], self.examples[1:2])])
+
+    def save_in_file(self):
+        with open(f"{self.data['word']}.txt", 'a+', encoding='utf-8') as f:
+            f.write(f'{self.data["to"]} Translations:' + '\n')
+            f.write(Translator.clean_translations(self))
+            f.write('\n')
+            f.write('\n' + f'{self.data["to"]} Examples:' + '\n')
+            f.write(Translator.clean_examples(self))
+            f.write('\n\n')
+
+    def print_file(self):
+        with open(f"{self.data['word']}.txt", 'r', encoding='utf-8') as f:
+            print(f.read())
+
+    def run(self):
+        # print(self.arg.slovo)  # TEST@!$
+        try:
+            Translator.define_source(self)
+            Translator.translate(self)
+            Translator.print_file(self)
+        except AttributeError as e:
+            sys.exit()
+
+new = Translator()
+Translator.run(new)
