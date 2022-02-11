@@ -1,0 +1,215 @@
+# BIN = 6 digits, account = 9 digits, Checksum = 1 digit
+# card number = 16 digits = BIN + account + Checksum
+# for example, card number: 530 446 - 421 234 567 - 8 (==5304 4642 1234 5678)
+
+from random import randint
+import sqlite3  # import SQLite module
+conn = sqlite3.connect('card.s3db')  # create Connection
+
+status = ""
+new = 0
+c_num, other_num = None, None
+how_much = 0
+
+
+class BankCard:
+    accounts = {}  # create empty dictionary for card numbers and pins
+    cards_issued = set()  # create empty set for checking if such card number has already been issued
+    verify_account = 0
+    # prepare to create table as database for using in  SQL queries
+    cur = conn.cursor()  # create a Cursor object
+    cur.execute('drop table if exists card')
+    cur.execute("""
+            CREATE TABLE if not exists card 
+            (id INTEGER PRIMARY KEY AUTOINCREMENT, 
+            number TEXT, pin TEXT, 
+            balance INTEGER DEFAULT 0);""")
+    conn.commit()
+
+    def __init__(self):
+        self.account = 0
+        self.card_number = 0
+        self.pin = 0
+        self.balance = 0
+
+    def number_generator(self):  # returns self.account, self.card_number, self.pin
+        self.account = ''.join([str(randint(0, 9)) for _ in range(9)])
+        # apply Luhn algorithm to find checksum
+        digits15 = '400000' + self.account
+        coll = [int(x) for x in digits15]
+        for i, z in enumerate(coll):
+            if i % 2 == 0:
+                coll[i] *= 2
+        luhn = [x if x <= 9 else (x - 9) for x in coll]
+        control_sum = sum(luhn)
+        if control_sum % 10 != 0:
+            checksum = (control_sum // 10 + 1) * 10 - control_sum
+        else:
+            checksum = 0
+        self.card_number = '400000' + self.account + str(checksum)
+        self.pin = ''.join([str(randint(0, 9)) for _ in range(4)])  # pin-code as string
+
+    def open_account(self):  # fills nested dictionary with info about account: {card number, pin, balance}
+        self.number_generator()
+        if self.account in BankCard.accounts.keys():
+            self.number_generator()
+        else:
+            BankCard.accounts.update({self.account: {'card': self.card_number, 'pin': self.pin, 'balance': self.balance}})
+            # add card number to set, consisting of card numbers that have already been issued
+            BankCard.cards_issued.add(self.card_number)
+            # add card info into table via SQL query
+            BankCard.cur.execute('INSERT INTO card (number,pin) VALUES({}, {});'.format(self.card_number, self.pin))
+            conn.commit()
+
+            return BankCard.accounts
+
+    def print_account_data(self):
+        print("Your card has been created")
+        print(f"Your card number:\n{self.card_number}")
+        print(f"Your card PIN:\n{self.pin}")
+
+    @staticmethod
+    def luhn_alg():  # apply Luhn algorithm to check entered card-number
+        global other_num
+        other_num = input("Enter card number:\n")
+        coll = [int(x) for x in other_num[:-1:]]
+        for i, z in enumerate(coll):
+            if i % 2 == 0:
+                coll[i] *= 2
+        luhn = [x if x <= 9 else (x - 9) for x in coll]
+        control_sum = sum(luhn) + int(other_num[-1])
+        if control_sum % 10 != 0:
+            print('Probably you made a mistake in the card number. Please try again!')
+        # else:
+        #     print("ok luhn passed")
+
+    @staticmethod
+    def transfer():
+        global other_num, how_much, c_num
+        print('Transfer')
+        BankCard.luhn_alg()
+        BankCard.cur.execute('SELECT number FROM card;')
+        #print(BankCard.cur.fetchall())
+        if (other_num, ) not in BankCard.cur.execute('SELECT number FROM card;'):
+            print('Such a card does not exist.')
+            BankCard.card_menu()
+        elif other_num == c_num:
+            print("You can't transfer money to the same account!")
+            BankCard.card_menu()
+        else:
+            how_much = int(input('Enter how much money you want to transfer: \n'))
+            BankCard.cur.execute('SELECT balance FROM card WHERE number = {}'.format(c_num))
+            b = BankCard.cur.fetchone()[0]
+            if how_much > int(b):
+                print('Not enough money!')
+            else:
+                print('Success!')
+                BankCard.cur.execute("""
+                    UPDATE card
+                    SET balance = balance + {} WHERE number = {}
+                    """.format(how_much, other_num))
+                BankCard.cur.execute("""
+                    UPDATE card
+                    SET balance = balance - {} WHERE number = {}
+                    """.format(how_much, c_num))
+                conn.commit()
+            BankCard.card_menu()
+
+    @staticmethod
+    def card_menu():
+        global status, c_num, other_num
+        print()
+        print("1. Balance\n2. Add income\n3. Do transfer\n4. Close account\n5.Log out\n0. Exit")
+        menu = input("> ")
+        if menu == '0':
+            exit()
+        elif menu == '1':
+            #print(f"Balance: {BankCard.accounts[BankCard.verify_account]['balance']}\n")
+            BankCard.cur.execute('SELECT balance FROM card WHERE number = {}'.format(c_num))
+            print()
+            print('Balance: {}'.format(BankCard.cur.fetchone()[0]))
+            BankCard.card_menu()
+        elif menu == '2':
+            deposit = input('Enter income:\n')
+            BankCard.cur.execute("""
+            UPDATE card
+            SET balance = balance + {} WHERE number = {}
+            """.format(deposit, c_num))
+            conn.commit()
+            print('Income was added!')
+            BankCard.card_menu()
+        elif menu == '3':
+            BankCard.transfer()
+        elif menu == '4':
+            BankCard.cur.execute("""
+                DELETE FROM card
+                WHERE number = {}
+                """.format(c_num))
+            conn.commit()
+            print('The account has been closed')
+            print()
+        elif menu == '5':
+            print()
+            c_num = None
+            print("You have successfully logged out!")
+            main_menu()
+
+    @staticmethod
+    def log_into():
+        global c_num
+        print()
+        acc_num = input("Enter your card number:\n")
+        psword = input("Enter your PIN:\n")
+        BankCard.verify_account = acc_num[6:-1]
+
+        try:
+
+            if (acc_num != BankCard.accounts[BankCard.verify_account]['card'] or
+            psword != BankCard.accounts[BankCard.verify_account]['pin']):
+                print()
+                print("Wrong card number or PIN!")
+                main_menu()
+            else:
+                print()
+                print("You have successfully logged in!")
+                c_num = acc_num
+                BankCard.card_menu()
+
+        except KeyError:
+            print("Wrong card number or PIN!\n")
+
+
+def exit():
+    global status
+    status = "off"
+    print()
+    print("Bye")
+
+
+def main_menu():
+    global status
+    while status != "off":
+        print("1. Create an account\n2. Log into account\n0. Exit")
+        menu = input("> ")
+        if menu == '0':
+            exit()
+        elif menu == '1':
+            print()
+            create_account()
+            main_menu()
+        elif menu == '2':
+            BankCard.log_into()
+
+
+def create_account():
+    global new
+    new = BankCard()
+    new.open_account()
+    new.print_account_data()
+
+
+main_menu()
+conn.close()
+# BankCard.cur.execute('SELECT * FROM card')
+# print(BankCard.cur.fetchall())
+# conn.close()
